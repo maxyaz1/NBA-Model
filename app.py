@@ -479,17 +479,12 @@ def main():
         with tab3:
             with st.spinner("Analyzing contract information..."):
                 try:
-                    # Get API key from environment variable or use a secret
-                    api_key = os.environ.get("GEMINI_API_KEY", "")
-                    
-                    # Show error if API key is not set
-                    if not api_key:
-                        st.error("Google Gemini API key not set. Please set the GEMINI_API_KEY environment variable.")
-                        st.info("For this demo, you can use the Streamlit secrets management to securely store your API key.")
-                    else:
-                        client = genai.Client(api_key=api_key)
+                    # Use the provided API key directly
+                    # Note: This is not recommended for production but useful for quick demos
+                    api_key = "AIzaSyAr_MxqC64vlyYaK6NFz6teioshvfCxNBc"
+                    client = genai.Client(api_key=api_key)
                         # Create a more structured prompt to get consistent JSON
-                        prompt = f"""
+                    prompt = f"""
                         Provide a detailed analysis of {selected_player}'s current NBA contract.
                        
                         Return ONLY a valid JSON object with this exact structure:
@@ -516,23 +511,23 @@ def main():
                         """
                        
                         # Generate response using the model directly
-                        response = client.models.generate_content(
+                    response = client.models.generate_content(
                         model="gemini-2.0-flash",
                         contents=prompt)
                        
                         # Get the response text
-                        response_text = response.text.strip()
+                    response_text = response.text.strip()
                        
                         # Clean up the response text to ensure valid JSON
-                        if response_text.startswith('```json'):
+                    if response_text.startswith('```json'):
                             response_text = response_text.replace('```json', '', 1)
-                        if response_text.endswith('```'):
+                    if response_text.endswith('```'):
                             response_text = response_text.rsplit('```', 1)[0]
                        
                         # Remove any backticks
-                        response_text = response_text.strip('`').strip()
+                    response_text = response_text.strip('`').strip()
                        
-                        try:
+                    try:
                             # Parse the JSON
                             contract_data = json.loads(response_text)
                            
@@ -581,7 +576,7 @@ def main():
                                 unsafe_allow_html=True
                             )
                            
-                        except json.JSONDecodeError as e:
+                    except json.JSONDecodeError as e:
                             st.error(f"Failed to parse JSON response: {e}")
                             st.write("Raw response (for debugging):")
                             st.code(response_text)
