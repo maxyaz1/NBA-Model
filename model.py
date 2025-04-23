@@ -1,221 +1,285 @@
+import requests
+from bs4 import BeautifulSoup
 import pandas as pd
+import time
+import string
+import os
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-import os
+from sklearn.metrics import mean_absolute_error
 import pickle
 
-def train_model():
-    """Train and return the salary prediction model using embedded data"""
-    try:
-        # Create a mock dataset directly in the code
-        print("Creating embedded dataset for model training")
-        mock_data = {
-            'points': [25.7, 26.4, 27.1, 30.4, 26.4, 33.9, 34.7, 23.7, 26.9, 24.5, 28.3, 22.1, 20.5, 19.8, 18.3],
-            'assists': [8.3, 5.1, 5.3, 6.5, 9.0, 9.8, 5.6, 3.6, 4.9, 7.0, 6.3, 7.5, 4.2, 3.5, 5.8],
-            'reboundsTotal': [7.3, 4.5, 6.9, 11.5, 12.4, 9.2, 11.2, 6.1, 8.1, 4.4, 5.2, 4.1, 7.8, 9.5, 3.2],
-            'TS_Percentage': [0.61, 0.63, 0.64, 0.61, 0.65, 0.62, 0.65, 0.59, 0.58, 0.61, 0.57, 0.60, 0.58, 0.56, 0.59],
-            'Simple_PER': [22.5, 24.3, 25.6, 31.8, 31.3, 28.4, 31.6, 24.4, 23.6, 22.2, 21.5, 20.8, 19.2, 18.8, 17.5],
-            'TeamSalaryCommitment': [192057940, 178316619, 220708856, 185971982, 185864258, 178812859, 174059777, 
-                                     174124752, 195610488, 185971982, 169846170, 167471133, 176102077, 151728562, 140746162],
-            'Salary': [47600000, 55760130, 51207168, 48787676, 48016920, 44290000, 53763753, 45640084, 37845020, 
-                       45650000, 30500000, 25500000, 22000000, 17800000, 12500000]
-        }
-        
-        # Create DataFrame
-        data = pd.DataFrame(mock_data)
-        
-        # Select features and target
-        features = ['points', 'assists', 'reboundsTotal', 'TS_Percentage', 'Simple_PER', 'TeamSalaryCommitment']
-        target = 'Salary'
-        
-        print(f"Training model with {len(data)} samples and features: {features}")
-        
-        # Train-test split
-        X = data[features]
-        y = data[target]
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
-        # Train model
-        model = RandomForestRegressor(random_state=42)
-        model.fit(X_train, y_train)
-        
-        # Ensure the 'models' directory exists
-        os.makedirs('models', exist_ok=True)
-        
-        # Save model
-        with open('models/salary_prediction_model.pkl', 'wb') as f:
-            pickle.dump(model, f)
-        
-        print("Model trained and saved successfully")
-        return model
-    
-    except Exception as e:
-        print(f"Error in train_model: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-
-def predict_salary_with_cap_and_tiers(player_features, model, info_df, player_name=None):
+def scrape_player_stats(letter):
     """
-    Predict player salary using percentage of cap method with appropriate tiers
+    Scrape all players whose last name starts with a specific letter
+    """
+    url = f"https://www.basketball-reference.com/players/{letter.lower()}/"
+    response = requests.get(url)
+    
+    if response.status_code != 200:
+        print(f"Failed to retrieve data for letter {letter}")
+        return None
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # The player table has id 'players'
+    player_table = soup.find('table', {'id': 'players'})
+    
+    if not player_table:
+        print(f"No player table found for letter {letter}")
+        return None
+    
+    # Extract the data into a pandas DataFrame
+    df = pd.read_html(str(player_table))[0]
+    
+    return df
+
+def scrape_active_players():
+    """
+    Scrape player data for active players
+    """
+    all_players = []
+    
+    # Go through each letter of the alphabet
+    for letter in string.ascii_lowercase:
+        print(f"Scraping players with last names starting with: {letter.upper()}")
+        letter_df = scrape_player_stats(letter)
+        
+        if letter_df is not None:
+            # Filter to keep only active players (last season is 2024-25)
+            if 'To' in letter_df.columns:
+                active_players = letter_df[letter_df['To'] >= 2023]
+                all_players.append(active_players)
+        
+        # Be nice to the server
+        time.sleep(1)
+    
+    # Combine all the data
+    combined_df = pd.concat(all_players, ignore_index=True)
+    
+    # Clean and format player names
+    combined_df['Player'] = combined_df['Player'].str.replace('*', '', regex=False)
+    
+    # Save raw data
+    combined_df.to_csv('data/basketball_reference_players_raw.csv', index=False)
+    
+    return combined_df
+
+def get_detailed_player_stats(player_url):
+    """
+    Get detailed stats for a player from their individual page
+    """
+    base_url = "https://www.basketball-reference.com"
+    full_url = base_url + player_url
+    
+    response = requests.get(full_url)
+    if response.status_code != 200:
+        print(f"Failed to retrieve data for {full_url}")
+        return None
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Get the advanced stats table
+    advanced_table = soup.find('table', {'id': 'advanced'})
+    
+    if not advanced_table:
+        print(f"No advanced stats found for {full_url}")
+        return None
+    
+    # Extract the advanced stats
+    advanced_df = pd.read_html(str(advanced_table))[0]
+    
+    # Use the most recent season's data
+    # Filter rows that are not headers or totals
+    recent_season = advanced_df[(advanced_df['Season'] != 'Season') & 
+                              (advanced_df['Season'] != 'Career') & 
+                              (advanced_df['Season'] != 'Totals')]
+    
+    if len(recent_season) > 0:
+        return recent_season.iloc[-1]  # Get the most recent season
+    else:
+        return None
+
+def process_and_merge_data():
+    """
+    Process scraped data and merge with existing salary data
+    """
+    # Scrape player data if it doesn't exist
+    if not os.path.exists('basketball_reference_players_raw.csv'):
+        players_df = scrape_active_players()
+    else:
+        players_df = pd.read_csv('basketball_reference_players_raw.csv')
+    
+    # Load existing salary data
+    if os.path.exists('data/nba_salary_data.csv'):
+        salary_df = pd.read_csv('nba_salary_data.csv')
+        #save nba_salary_data.csv to desktop as nba_salary_data
+
+        #salary_df.to_csv('C:/Users/maxyazdian/Desktop/nba_salary_data.csv', index = False)
+        
+
+        salary_df.to_csv('nba_salary_data', index = False)
+    else:
+        print("Error: nba_salary_data.csv not found")
+        return None
+    
+    # Create a processed dataframe with required stats
+    processed_data = []
+    
+    # Extract player URLs if available, otherwise just use basic stats
+    if 'url' in players_df.columns:
+        for idx, player in players_df.iterrows():
+            detailed_stats = get_detailed_player_stats(player['url'])
+            if detailed_stats is not None:
+                player_data = {
+                    'Player': player['Player'],
+                    'PER': detailed_stats.get('PER', 0),
+                    'TS_Percentage': detailed_stats.get('TS%', 0),
+                    'points': player.get('PTS', 0),
+                    'assists': player.get('AST', 0),
+                    'reboundsTotal': player.get('TRB', 0),
+                    'Simple_PER': float(detailed_stats.get('PER', 0)) if not pd.isna(detailed_stats.get('PER', 0)) else 0
+                }
+                processed_data.append(player_data)
+            time.sleep(0.5)  # Be nice to the server
+    else:
+        # Use only basic stats from the player listing
+        for idx, player in players_df.iterrows():
+            player_data = {
+                'Player': player['Player'],
+                'points': player.get('PTS', 0),
+                'assists': player.get('AST', 0),
+                'reboundsTotal': player.get('TRB', 0),
+                'TS_Percentage': 0,  # Placeholder
+                'Simple_PER': 0  # Placeholder
+            }
+            processed_data.append(player_data)
+    
+    stats_df = pd.DataFrame(processed_data)
+    
+    # Merge with salary data
+    merged_df = pd.merge(stats_df, salary_df, on='Player', how='inner')
+    
+    # Save the merged dataset
+    merged_df.to_csv('data/player_stats_and_salary_fixed (1).csv', index=False)
+    
+    return merged_df
+
+def train_model():
+    """Train and return the salary prediction model"""
+    
+    # Process and merge data if needed
+    if not os.path.exists('player_stats_and_salary_fixed (1).csv'):
+        merged_data = process_and_merge_data()
+        if merged_data is None:
+            raise FileNotFoundError("Failed to create merged dataset")
+    
+    # Load merged dataset for model training
+    data = pd.read_csv('player_stats_and_salary_fixed (1).csv')
+    
+    # Select features and target
+    features = ['points', 'assists', 'reboundsTotal', 'TS_Percentage', 'Simple_PER', 'TeamSalaryCommitment']
+    target = 'Salary'
+    
+    # Make sure all features are numeric
+    for feature in features:
+        if feature in data.columns:
+            if data[feature].dtype == 'object':
+                # Try to convert to numeric, replacing non-numeric values with NaN
+                data[feature] = pd.to_numeric(data[feature], errors='coerce')
+                # Replace NaN with 0 or the mean
+                data[feature].fillna(data[feature].mean() if data[feature].mean() > 0 else 0, inplace=True)
+    
+    # Train-test split
+    X = data[features]
+    y = data[target]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Train model
+    model = RandomForestRegressor(random_state=42)
+    model.fit(X_train, y_train)
+    
+    # Evaluate model
+    y_pred = model.predict(X_test)
+    mae = mean_absolute_error(y_test, y_pred)
+    print(f"Mean Absolute Error: {mae}")
+    
+    # Ensure the 'models' directory exists
+    os.makedirs('models', exist_ok=True)
+    
+    # Save model
+    with open('models/salary_prediction_model.pkl', 'wb') as f:
+        pickle.dump(model, f)
+    
+    # Save the percentile threshold for max salary calculation
+    # Make predictions on the entire dataset
+    all_predictions = model.predict(X)
+    
+    # Calculate the 97th percentile (top 3%)
+    percentile_97 = np.percentile(all_predictions, 97)
+    
+    # Save the percentile threshold
+    with open('models/salary_percentile_threshold.pkl', 'wb') as f:
+        pickle.dump(percentile_97, f)
+        
+    return model
+
+def predict_salary_with_cap_and_mle(player_features, model):
+    """
+    Predict player salary using the trained model,
+    with a cap for top 3% players,
+    adjustment for MLE-range salaries,
+    and MAX salary for players with rating > 35
     """
     if model is None:
         return None
-   
-    # Current NBA salary cap
-    NBA_SALARY_CAP = 140588000  # 2024-25 season
-    
-    # NBA salary constants for tiers
-    MIN_SALARY_PCT = 2.5  # Tier 1: Minimum salary (approximate percentage)
-    BAE_PCT = 3.32  # Tier 2: Bi-annual exception
-    ROOM_PCT = 5.678  # Tier 3: Room exception
-    MLE_PCT = 9.0  # Tier 4: Mid-Level Exception
-    
-    # Check if player name was provided
-    player_is_all_nba = False
-    if player_name:
-        # All-NBA Players (2023-24 and 2022-23 seasons)
-        all_nba_players = [
-            # 2023-24 First Team
-            "Giannis Antetokounmpo", "Luka Dončić", "Shai Gilgeous-Alexander", 
-            "Nikola Jokić", "Jayson Tatum",
-            # 2023-24 Second Team
-            "Jalen Brunson", "Anthony Davis", "Kevin Durant", 
-            "Anthony Edwards", "Kawhi Leonard",
-            # 2023-24 Third Team
-            "Devin Booker", "Stephen Curry", "Tyrese Haliburton", 
-            "LeBron James", "Domantas Sabonis",
-            # 2022-23 First Team
-            "Joel Embiid",
-            # 2022-23 Second Team
-            "Jimmy Butler", "Jaylen Brown", "Donovan Mitchell",
-            # 2022-23 Third Team
-            "Julius Randle", "De'Aaron Fox", "Damian Lillard"
-        ]
-        
-        # Standardize player name for comparison
-        for i, p in enumerate(all_nba_players):
-            # Remove diacritics for more reliable comparison
-            all_nba_players[i] = p.replace("č", "c").replace("ć", "c")
-        
-        # Check if player is in All-NBA list (with standardized name)
-        standardized_player_name = player_name.replace("č", "c").replace("ć", "c")
-        player_is_all_nba = any(name.lower() in standardized_player_name.lower() for name in all_nba_players)
-    
-    # List of features the model was trained with
-    expected_features = ['points', 'assists', 'reboundsTotal', 'TS_Percentage', 'Simple_PER', 'TeamSalaryCommitment']
-   
-    # Create a DataFrame with only the expected features
+
+    # NBA salary constants
+    NBA_SALARY_CAP = 140588000
+    MAX_SALARY_PERCENTAGE = 0.35
+    MAX_SALARY = NBA_SALARY_CAP * MAX_SALARY_PERCENTAGE
+    MID_LEVEL_EXCEPTION = 12822000
+    MLE_THRESHOLD = 3000000  # $3 million threshold around the MLE
+
+    # Step 1: Check for high player rating
+    if 'rating' in player_features.columns:
+        rating_value = player_features['rating'].iloc[0]
+        if rating_value > 35:
+            return MAX_SALARY
+
+    # Step 2: Predict with model
+    expected_features = ['points', 'assists', 'reboundsTotal', 'TS_Percentage',
+                         'Simple_PER', 'TeamSalaryCommitment']
     prediction_df = pd.DataFrame()
-   
-    # Add only the features the model expects
+
     for feature in expected_features:
         if feature in player_features.columns:
             prediction_df[feature] = player_features[feature]
         else:
-            # If a required feature is missing, add it with a default value
             prediction_df[feature] = 0
-    
-    # Get the player's experience
-    experience = int(info_df['SEASON_EXP'].values[0])
-    
-    # Determine max eligible percentage based on experience
-    if experience <= 6:
-        max_eligible_pct = 25.0  # 0-6 years: 25% of cap
-    elif experience <= 9:
-        max_eligible_pct = 30.0  # 7-9 years: 30% of cap  
-    else:
-        max_eligible_pct = 35.0  # 10+ years: 35% of cap
-    
-    # If player is All-NBA, automatically assign max contract
-    if player_is_all_nba:
-        salary_pct = max_eligible_pct
-        tier = 9  # Max tier
-        tier_name = f"Maximum Contract ({max_eligible_pct}% of Cap) - All-NBA Player"
-        # Set a high player rating for consistency
-        player_rating = 100.0
-    else:
-        # Make initial prediction
-        initial_predicted_salary = model.predict(prediction_df)[0]
-        
-        # Convert to percentage of salary cap
-        predicted_pct = (initial_predicted_salary / NBA_SALARY_CAP) * 100
-        
-        # Define a player rating based on key features to identify top players
-        player_rating = (
-            player_features['points'].values[0] * 1.0 +
-            player_features['assists'].values[0] * 0.7 +
-            player_features['reboundsTotal'].values[0] * 0.5 +
-            player_features['Simple_PER'].values[0] * 3.0
-        )
-        
-        # Thresholds for top players
-        TOP_PLAYER_THRESHOLD = 50.0  # Players above this rating get max contract
-        HIGH_TIER_THRESHOLD = 40.0   # Players above this get 25-30% tier
-        
-        # Determine the salary tier and adjusted percentage based on rating and prediction
-        if player_rating >= TOP_PLAYER_THRESHOLD:
-            # Top players always get max eligible percentage
-            salary_pct = max_eligible_pct
-            tier = 9  # Max tier
-            tier_name = f"Maximum Contract ({max_eligible_pct}% of Cap)"
-        elif player_rating >= HIGH_TIER_THRESHOLD or predicted_pct >= 25.0:
-            # High tier players get 25-30% (capped at their max eligible)
-            salary_pct = min(27.5, max_eligible_pct)
-            tier = 8  # 25-30% tier
-            tier_name = "25-30% of Cap"
-        elif predicted_pct >= 20.0:
-            salary_pct = 22.5  # Middle of Tier 7
-            tier = 7  # 20-25% tier
-            tier_name = "20-25% of Cap"
-        elif predicted_pct >= 15.0:
-            salary_pct = 17.5  # Middle of Tier 6
-            tier = 6  # 15-20% tier
-            tier_name = "15-20% of Cap"
-        elif predicted_pct >= 10.0:
-            salary_pct = 12.5  # Middle of Tier 5
-            tier = 5  # 10-15% tier
-            tier_name = "10-15% of Cap"
-        elif abs(predicted_pct - MLE_PCT) <= 1.5:  # Within 1.5% of MLE
-            salary_pct = MLE_PCT
-            tier = 4  # MLE tier
-            tier_name = "Mid-Level Exception"
-        elif abs(predicted_pct - ROOM_PCT) <= 1.0:  # Within 1.0% of Room Exception
-            salary_pct = ROOM_PCT
-            tier = 3  # Room exception tier
-            tier_name = "Room Exception"
-        elif abs(predicted_pct - BAE_PCT) <= 0.7:  # Within 0.7% of BAE
-            salary_pct = BAE_PCT
-            tier = 2  # BAE tier
-            tier_name = "Bi-Annual Exception"
-        elif predicted_pct <= 3.0:
-            salary_pct = MIN_SALARY_PCT
-            tier = 1  # Minimum salary tier
-            tier_name = "Minimum Salary"
-        else:
-            salary_pct = predicted_pct
-            tier = 0  # No specific tier
-            tier_name = "Role Player"
-    
-    # Calculate final salary
-    final_salary = NBA_SALARY_CAP * (salary_pct / 100)
-    
-    result = {
-        'Salary': final_salary,
-        'Percentage': salary_pct,
-        'Tier': tier,
-        'TierName': tier_name,
-        'Experience': experience,
-        'MaxEligible': max_eligible_pct,
-        'PlayerRating': player_rating,
-        'IsAllNBA': player_is_all_nba
-    }
-    
-    return result
 
+    predicted_salary = model.predict(prediction_df)[0]
+
+    # Step 3: Apply 97th percentile override
+    try:
+        with open('models/salary_percentile_threshold.pkl', 'rb') as f:
+            percentile_97 = pickle.load(f)
+        if predicted_salary >= percentile_97:
+            return MAX_SALARY
+    except FileNotFoundError:
+        pass
+
+    # Step 4: MLE adjustment
+    if abs(predicted_salary - MID_LEVEL_EXCEPTION) <= MLE_THRESHOLD:
+        return MID_LEVEL_EXCEPTION
+
+    # Step 5: Return regular prediction
+    return predicted_salary
+
+# Streamlit app integration
 def prepare_player_features(player_stats, player_info):
-    # Team salary data
+    # Team salary data for the 2024/25 season
     team_salary_data = {
         "Phoenix": 220708856,
         "Minnesota": 204780898,
@@ -272,9 +336,16 @@ def prepare_player_features(player_stats, player_info):
         'TeamSalaryCommitment': team_salary_commitment,
     }
 
-    # Return the features
+    # Return only the features used during training
     return pd.DataFrame([features])
 
-# If this file is run directly, train the model
+# Modified version of predict_salary function to use in the Streamlit app
+def predict_salary(player_features, model):
+    """
+    Wrapper function to use the enhanced salary prediction with cap and MLE
+    """
+    return predict_salary_with_cap_and_mle(player_features, model)
+
+# If this file is run directly, run the process
 if __name__ == "__main__":
     train_model()
