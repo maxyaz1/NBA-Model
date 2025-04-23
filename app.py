@@ -494,7 +494,7 @@ def main():
     with tab3:
             with st.spinner("Analyzing contract information..."):
                 try:
-                    client = genai.Client(api_key="AIzaSyAz56zLp5egYUz_2jGNTDYMddJW9KXNu88")
+                    client = genai.Client(api_key="AIzaSyAr_MxqC64vlyYaK6NFz6teioshvfCxNBc")
                     # Create a more structured prompt to get consistent JSON
                     prompt = f"""
                     Provide a detailed analysis of {selected_player}'s current NBA contract.
