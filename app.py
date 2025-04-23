@@ -1,16 +1,18 @@
 # NBA Salary Predictor Streamlit App
 import streamlit as st
 import pandas as pd
-import pickle
-from nba_api.stats.static import players
-from nba_api.stats.endpoints import commonplayerinfo, playergamelog
-import plotly.express as px
-import requests
-import json
-import os
 import numpy as np
 import sys
 import traceback
+import requests
+import json
+from nba_api.stats.static import players
+from nba_api.stats.endpoints import commonplayerinfo, playergamelog
+import plotly.express as px
+import os
+
+# Import directly from model.py
+import model
 
 # Import Google Generative AI library
 try:
@@ -27,66 +29,16 @@ st.set_page_config(page_title="NBA Salary Predictor and Performance Analysis", p
 st.title("NBA Player Salary Predictor")
 st.markdown("Predict NBA player salaries based on performance statistics")
 
-# Load the trained model
+# Load the model
 @st.cache_resource
 def load_model():
     try:
-        # Check if the model file already exists
-        if os.path.exists('models/salary_prediction_model.pkl'):
-            with open('models/salary_prediction_model.pkl', 'rb') as f:
-                model = pickle.load(f)
-            return model
-        else:
-            # Try to import and run the train_model function
-            try:
-                from model import train_model
-                model = train_model()
-                return model
-            except Exception as e:
-                st.error(f"Error training model: {e}")
-                
-                # As a fallback, train a simple model directly here
-                if os.path.exists('data/nba_salary_stats_merged.csv'):
-                    st.info("Training model directly...")
-                    from sklearn.ensemble import RandomForestRegressor
-                    from sklearn.model_selection import train_test_split
-                    
-                    # Load the data
-                    data = pd.read_csv('data/nba_salary_stats_merged.csv')
-                    
-                    # Select features and target
-                    features = ['points', 'assists', 'reboundsTotal', 'TS_Percentage', 'Simple_PER', 'TeamSalaryCommitment']
-                    target = 'Salary'
-                    
-                    # Make sure all features are numeric
-                    for feature in features:
-                        if feature in data.columns:
-                            if data[feature].dtype == 'object':
-                                data[feature] = pd.to_numeric(data[feature], errors='coerce')
-                                data[feature].fillna(data[feature].mean() if data[feature].mean() > 0 else 0, inplace=True)
-                    
-                    # Train-test split
-                    X = data[features]
-                    y = data[target]
-                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-                    
-                    # Train model
-                    model = RandomForestRegressor(random_state=42)
-                    model.fit(X_train, y_train)
-                    
-                    # Ensure the 'models' directory exists
-                    os.makedirs('models', exist_ok=True)
-                    
-                    # Save model
-                    with open('models/salary_prediction_model.pkl', 'wb') as f:
-                        pickle.dump(model, f)
-                    
-                    return model
-                else:
-                    st.error("Cannot load or train model. Missing required data files.")
-                    return None
+        # Import the train_model function directly from model.py
+        model_instance = model.train_model()
+        return model_instance
     except Exception as e:
-        st.error(f"Could not load model: {e}")
+        st.error(f"Error loading/training model: {e}")
+        st.code(traceback.format_exc())
         return None
 
 # Fetch player stats using the NBA API
@@ -96,18 +48,18 @@ def get_player_stats(player_id):
     df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'])
     return df
 
-def predict_salary_with_cap_and_tiers(player_features, model, info_df, player_name=None):
+def predict_salary_with_cap_and_tiers(player_features, model_instance, info_df, player_name=None):
     """
     Predict player salary using percentage of cap method with appropriate tiers,
     ensuring top players get the max tier
     
     Parameters:
     - player_features: DataFrame with player statistics
-    - model: Trained model for salary prediction
+    - model_instance: Trained model for salary prediction
     - info_df: DataFrame with player information
     - player_name: (Optional) Player's name to check for All-NBA status
     """
-    if model is None:
+    if model_instance is None:
         return None
    
     # Current NBA salary cap
@@ -185,7 +137,7 @@ def predict_salary_with_cap_and_tiers(player_features, model, info_df, player_na
         player_rating = 100.0
     else:
         # Make initial prediction
-        initial_predicted_salary = model.predict(prediction_df)[0]
+        initial_predicted_salary = model_instance.predict(prediction_df)[0]
         
         # Convert to percentage of salary cap
         predicted_pct = (initial_predicted_salary / NBA_SALARY_CAP) * 100
@@ -262,71 +214,13 @@ def predict_salary_with_cap_and_tiers(player_features, model, info_df, player_na
     
     return result
 
-def prepare_player_features(player_stats, player_info):
-    # Team salary data for the 2024/25 season
-    team_salary_data = {
-        "Phoenix": 220708856,
-        "Minnesota": 204780898,
-        "Boston": 195610488,
-        "New York": 193588886,
-        "LA Lakers": 192057940,
-        "Milwaukee": 185971982,
-        "Denver": 185864258,
-        "Dallas": 178812859,
-        "Golden State": 178316619,
-        "Miami": 176102077,
-        "New Orleans": 175581168,
-        "LA Clippers": 174124752,
-        "Philadelphia": 174059777,
-        "Washington": 173873325,
-        "Toronto": 173621417,
-        "Sacramento": 172815356,
-        "Cleveland": 172471107,
-        "Charlotte": 171952448,
-        "Brooklyn": 171804859,
-        "Atlanta": 170056977,
-        "Houston": 170038023,
-        "Indiana": 169846170,
-        "Portland": 169031747,
-        "Chicago": 168147899,
-        "Oklahoma City": 167471133,
-        "Memphis": 165903638,
-        "San Antonio": 164872330,
-        "Utah": 156874018,
-        "Orlando": 151728562,
-        "Detroit": 140746162,
-    }
-
-    # Get the player's team name
-    team_name = player_info['TEAM_NAME'].values[0]
-
-    # Fetch the team salary commitment, default to 120M if not found
-    team_salary_commitment = team_salary_data.get(team_name, 120000000)
-
-    # Prepare features
-    features = {
-        'points': player_stats['PTS'].astype(float).mean(),
-        'assists': player_stats['AST'].astype(float).mean(),
-        'reboundsTotal': player_stats['REB'].astype(float).mean(),
-        'TS_Percentage': player_stats['PTS'].sum() / (2 * (player_stats['FGA'].sum() + 0.44 * player_stats['FTA'].sum())),
-        'Simple_PER': (
-            player_stats['PTS'].astype(float).mean() +
-            player_stats['REB'].astype(float).mean() * 1.2 +
-            player_stats['AST'].astype(float).mean() * 1.5 +
-            player_stats['STL'].astype(float).mean() * 2 +
-            player_stats['BLK'].astype(float).mean() * 2 -
-            player_stats['TOV'].astype(float).mean() * 1.2
-        ) / player_stats['MIN'].astype(float).mean(),
-        'TeamSalaryCommitment': team_salary_commitment,
-    }
-
-    # Return only the features used during training
-    return pd.DataFrame([features])
+# Use the prepare_player_features function from model.py
+prepare_player_features = model.prepare_player_features
 
 # Main app logic
 def main():
     # Load the model
-    model = load_model()
+    model_instance = load_model()
    
     # Player selection
     player_dict = players.get_players()
@@ -370,7 +264,7 @@ def main():
         with tab1:
             player_features = prepare_player_features(player_stats, info_df)
             # Pass the player name to the prediction function
-            predicted_result = predict_salary_with_cap_and_tiers(player_features, model, info_df, selected_player)
+            predicted_result = predict_salary_with_cap_and_tiers(player_features, model_instance, info_df, selected_player)
             
             if predicted_result is not None:
                 # Check if player is All-NBA
