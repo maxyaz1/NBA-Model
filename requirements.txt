@@ -8,3 +8,4 @@ requests
 google-generativeai
 scikit-learn
 beautifulsoup4
+lxml
