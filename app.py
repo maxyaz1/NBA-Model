@@ -16,16 +16,6 @@ import model
 
 # Import Google Generative AI library
 try:
-    # Your code logic here
-    pass
-except Exception as e:
-    st.error(f"An error occurred: {e}")
-    st.code(traceback.format_exc())
-    # Your code logic here
-    pass
-except Exception as e:
-    st.error(f"An error occurred: {e}")
-    st.code(traceback.format_exc())
     import google.generativeai as genai
 except ImportError:
     import subprocess
@@ -486,121 +476,120 @@ def main():
                               title='Player Efficiency Over Time')
                 st.plotly_chart(fig4)
 
-        # Efficiency
-    filtered_stats['EFFICIENCY'] = filtered_stats['PERFORMANCE'] / filtered_stats['MIN'].astype(float)
-    fig4 = px.line(filtered_stats, x='GAME_DATE', y='EFFICIENCY', title='Player Efficiency Over Time')
-    st.plotly_chart(fig4)
-        
-    with tab3:
+        with tab3:
             with st.spinner("Analyzing contract information..."):
                 try:
-                    client = genai.Client(api_key="AIzaSyAr_MxqC64vlyYaK6NFz6teioshvfCxNBc")
-                    # Create a more structured prompt to get consistent JSON
-                    prompt = f"""
-                    Provide a detailed analysis of {selected_player}'s current NBA contract.
-                   
-                    Return ONLY a valid JSON object with this exact structure:
-                    {{
-                      "current_contract": {{                    # Add a row for 'Total' as the Team Salary Cap
-                    team_cap = pd.concat(
-                        [team_cap, pd.DataFrame([{'Team': 'Total', 'Average': team_cap['Average'].mean()}])],
-                        ignore_index=True
-                    )
-                        "years": "Number of years",
-                        "total_value": "Total contract value",
-                        "annual_average": "Average annual value",
-                        "team": "Current team"
-                      }},
-                      "contract_history": [
+                    # Get API key from environment variable or use a secret
+                    api_key = os.environ.get("GEMINI_API_KEY", "")
+                    
+                    # Show error if API key is not set
+                    if not api_key:
+                        st.error("Google Gemini API key not set. Please set the GEMINI_API_KEY environment variable.")
+                        st.info("For this demo, you can use the Streamlit secrets management to securely store your API key.")
+                    else:
+                        client = genai.Client(api_key=api_key)
+                        # Create a more structured prompt to get consistent JSON
+                        prompt = f"""
+                        Provide a detailed analysis of {selected_player}'s current NBA contract.
+                       
+                        Return ONLY a valid JSON object with this exact structure:
                         {{
-                          "period": "Years with team",
-                          "value": "Contract value",
-                          "team": "Team name"
+                          "current_contract": {{                    
+                            "years": "Number of years",
+                            "total_value": "Total contract value",
+                            "annual_average": "Average annual value",
+                            "team": "Current team"
+                          }},
+                          "contract_history": [
+                            {{
+                              "period": "Years with team",
+                              "value": "Contract value",
+                              "team": "Team name"
+                            }}
+                          ],
+                          "bonuses": "Brief description of known bonuses",
+                          "comparison": "Brief comparison to similar players",
+                          "cap_impact": "Brief description of salary cap impact"
                         }}
-                      ],
-                      "bonuses": "Brief description of known bonuses",
-                      "comparison": "Brief comparison to similar players",
-                      "cap_impact": "Brief description of salary cap impact"
-                    }}
-                   
-                    Do not include any explanations, markdown formatting, or code blocks in your response - ONLY the JSON object.
-                    """
-                   
-                    # Generate response using the model directly
-                    response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=prompt)
-                   
-                    # Get the response text
-                    response_text = response.text.strip()
-                   
-                    # Clean up the response text to ensure valid JSON
-                    if response_text.startswith('```json'):
-                        response_text = response_text.replace('```json', '', 1)
-                    if response_text.endswith('```'):
-                        response_text = response_text.rsplit('```', 1)[0]
-                   
-                    # Remove any backticks
-                    response_text = response_text.strip('`').strip()
-                   
-                    try:
-                        # Parse the JSON
-                        contract_data = json.loads(response_text)
                        
-                        # Display contract information
-                        st.subheader("Current Contract")
-                        current = contract_data.get("current_contract", {})
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**Term:** {current.get('years', 'N/A')}")
-                            st.write(f"**Total Value:** {current.get('total_value', 'N/A')}")
-                        with col2:
-                            st.write(f"**Annual Average:** {current.get('annual_average', 'N/A')}")
-                            st.write(f"**Team:** {current.get('team', 'N/A')}")
+                        Do not include any explanations, markdown formatting, or code blocks in your response - ONLY the JSON object.
+                        """
                        
-                        # Display contract history
-                        st.subheader("Contract History")
-                        history = contract_data.get("contract_history", [])
-                        if isinstance(history, list) and history:
-                            for contract in history:
-                                st.write(f"**{contract.get('period', 'N/A')}:** {contract.get('value', 'N/A')} ({contract.get('team', 'N/A')})")
-                        else:
-                            st.write("No contract history available.")
+                        # Generate response using the model directly
+                        response = client.models.generate_content(
+                        model="gemini-2.0-flash",
+                        contents=prompt)
                        
-                        # Display bonuses
-                        st.subheader("Performance Bonuses")
-                        bonuses = contract_data.get("bonuses", "No bonus information available.")
-                        st.write(bonuses)
+                        # Get the response text
+                        response_text = response.text.strip()
                        
-                        # Display comparison
-                        st.subheader("Market Comparison")
-                        comparison = contract_data.get("comparison", "No comparison information available.")
-                        st.write(comparison)
+                        # Clean up the response text to ensure valid JSON
+                        if response_text.startswith('```json'):
+                            response_text = response_text.replace('```json', '', 1)
+                        if response_text.endswith('```'):
+                            response_text = response_text.rsplit('```', 1)[0]
                        
-                        # Display cap impact
-                        st.subheader("Salary Cap Impact")
-                        cap_impact = contract_data.get("cap_impact", "No salary cap impact information available.")
-                        st.write(cap_impact)
+                        # Remove any backticks
+                        response_text = response_text.strip('`').strip()
                        
-                        # Add a disclaimer
-                        st.markdown(
-                            """
-                            <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; font-size: 0.8em; margin-top: 20px;">
-                            <strong>Note:</strong> This contract analysis was generated using AI and may not reflect the most current information. Please verify details with official NBA sources.
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                       
-                    except json.JSONDecodeError as e:
-                        st.error(f"Failed to parse JSON response: {e}")
-                        st.write("Raw response (for debugging):")
-                        st.code(response_text)
-                       
-                        # Try to display the information in a more readable format
-                        st.subheader("Contract Information (Unformatted)")
-                        st.write(response_text)
-               
+                        try:
+                            # Parse the JSON
+                            contract_data = json.loads(response_text)
+                           
+                            # Display contract information
+                            st.subheader("Current Contract")
+                            current = contract_data.get("current_contract", {})
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write(f"**Term:** {current.get('years', 'N/A')}")
+                                st.write(f"**Total Value:** {current.get('total_value', 'N/A')}")
+                            with col2:
+                                st.write(f"**Annual Average:** {current.get('annual_average', 'N/A')}")
+                                st.write(f"**Team:** {current.get('team', 'N/A')}")
+                           
+                            # Display contract history
+                            st.subheader("Contract History")
+                            history = contract_data.get("contract_history", [])
+                            if isinstance(history, list) and history:
+                                for contract in history:
+                                    st.write(f"**{contract.get('period', 'N/A')}:** {contract.get('value', 'N/A')} ({contract.get('team', 'N/A')})")
+                            else:
+                                st.write("No contract history available.")
+                           
+                            # Display bonuses
+                            st.subheader("Performance Bonuses")
+                            bonuses = contract_data.get("bonuses", "No bonus information available.")
+                            st.write(bonuses)
+                           
+                            # Display comparison
+                            st.subheader("Market Comparison")
+                            comparison = contract_data.get("comparison", "No comparison information available.")
+                            st.write(comparison)
+                           
+                            # Display cap impact
+                            st.subheader("Salary Cap Impact")
+                            cap_impact = contract_data.get("cap_impact", "No salary cap impact information available.")
+                            st.write(cap_impact)
+                           
+                            # Add a disclaimer
+                            st.markdown(
+                                """
+                                <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; font-size: 0.8em; margin-top: 20px;">
+                                <strong>Note:</strong> This contract analysis was generated using AI and may not reflect the most current information. Please verify details with official NBA sources.
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                           
+                        except json.JSONDecodeError as e:
+                            st.error(f"Failed to parse JSON response: {e}")
+                            st.write("Raw response (for debugging):")
+                            st.code(response_text)
+                           
+                            # Try to display the information in a more readable format
+                            st.subheader("Contract Information (Unformatted)")
+                            st.write(response_text)
+                
                 except Exception as e:
                     st.error(f"Error generating contract analysis: {e}")
                     import traceback
